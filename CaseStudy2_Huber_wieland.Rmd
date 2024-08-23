@@ -1,0 +1,648 @@
+---
+title: "Case study 2: Factor Analysis"
+author: "Oscar Wieland, Pablo Huber"
+date: "2024-04-07"
+output: 
+    prettydoc::html_pretty:
+    theme: cayman
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### Preparation 
+```{r}
+rm(list = ls()) #Clean the entire environment
+cat("\014") # clean console
+#setwd("~/Desktop/Master-Business analytics/Spring semester/Advanced Data Driven/Case study/Case study 2")
+```
+#### Install required packages
+```{r}
+#install.packages('rcompanion')
+#install.packages('nortest')
+#install.packages('corrplot')
+#install.packages('olsrr')
+#install.packages('dplyr')
+#install.packages('pastecs')
+#install.packages('REdaS')
+#install.packages('psych')
+#install.packages('lm.beta')
+#install.packages("mice") 
+#install.packages("naniar")
+```
+
+
+
+#### Import required packages
+```{r, message = FALSE, warning=FALSE}
+library(rcompanion)   # Histogram and Normal Curve
+library(nortest) # Kolmogorov-Smirnov-Test
+library(corrplot) #C orrelation matrix plot
+library(olsrr)  # VIF and Tolerance Values
+library(dplyr)
+library(pastecs)
+library(REdaS) # Bartelett's Test
+library(psych)
+library(lm.beta)
+library(mice) # MCAR plot
+library(naniar) # MCAR test
+library(VIM) # Visualisation of missing values
+```
+
+## Context 
+
+Quality significantly impact effective corporate performance and is a key driver of increased profitability for companies. It remains a vital force behind corporate success, influencing both customer happiness and operational effectiveness. Thus, companies want to quantify quality in order to take advantage of it. One prominent smartphone manufacturer's product management team, started a project to develop a framework for evaluating smartphone quality from the standpoint of user experience. They want to know in greater depth which aspects of quality account for a major portion of the outcome factors such as willingness to pay premium (WTPP) and repurchase intentions (RI) to have a criterion variable to determine whether their efforts to increase quality are successful or not.
+
+Indeed, there is currently no clear definition or correct measurement of quality. The product management team seeks to define product quality as the consumer's evaluation of a product's overall quality, value, or superiority over alternatives. Unfortunately, in the literature, there is mainly the following quality dimensions, which may not be entirely distinct: aesthetics, durability, ease of use, features, conformance, performance, reliability, serviceability and distinctiveness.
+
+## Our goal
+
+We have been contacted by the product management team to identify relevant product quality dimensions from a customer point of view. Qualitative interviews, consisting of 33 questions to measure perceived product quality of 1014 smartphone customers in the US were put at our disposal.
+
+Here is the dataset:
+```{r}
+survey = read.csv("Data File_Case_Study_Factor Analysis_MD.csv")
+head(survey)
+```
+
+
+## Question 1
+
+To do so, we decided to perform a factor analysis. Factor analysis is a great tool to condense large datasets into a small number of meaningful dimensions that can uncover key aspects of product quality. We will first run a principal axis factoring with varimax rotation. Once we have an appropriate solution, we'll conduct a principal component analysis and compare the results.
+
+Our factor analysis will be performed on the 33 quality questions of the survey. Consequently, we select only the appropriate columns: 
+```{r}
+QI = survey[,paste0("qd", seq(1, 33))]
+```
+
+### Missing values
+
+The first thing to do is check if there are missing values as they could produce biased results.
+```{r}
+list_na =colnames(QI)[apply(QI,2,anyNA)]
+list_na
+```
+
+Some columns seem to contain missing values. If the missing values are not missing completely at random (MCAR) or represent a huge proportion of the dataset, it could be a problem.
+First we will visualize the patterns and then run a test to see if the missing values are MCAR.
+
+```{r}
+MissingValues_plot = aggr(QI, col=c('navyblue','red'), numbers=TRUE , cex.axis=.6, gap=5, ylab=c("Histogram of missing data","Pattern"))
+```
+We can see in the right plot that ~96% of the samples are not missing any information and ~4% of the samples are missing values for all the 6 questions. Strangely enough, those questions are not optional as the scale goes from 1 to 5. The reason behind this pattern could be investigated, but as it only affect a small proportion of the dataset, we will keep using the rest of the data for this study.
+
+The MCAR test strangely don't confirm the result of the plot:
+
+- The MCAR test Null hypothesis is: Data is MCAR
+
+- The high p-value suggest that we fail to reject the hypothesis that the data is MCAR.
+(However as there is only one pattern for missing data this result doesn't make sense.)
+```{r, warning=FALSE}
+# MCAR Test
+mcar_test(QI)
+```
+
+
+
+Removing the rows with missing values shrink the dataset from 1014 rows to 969:
+```{r}
+QI = na.omit(QI)
+dim(QI)[1]
+```
+
+Now our dataset no longer contains any missing values:
+```{r}
+list_na =colnames(QI)[apply(QI,2,anyNA)]
+list_na
+```
+### Correlation among variables
+
+The first step of a factor analysis is to analyze the correlation matrix. It will help us examine the relationships among variables. 
+
+#### Correlation matrix
+```{r}
+raqMatrix = cor(QI)
+corrplot(as.matrix(raqMatrix), type = "lower", tl.cex=0.7)
+# If you want the numbers:  corrplot(as.matrix(raqMatrix), type = "lower", tl.cex=0.7,method="number", number.cex=0.3, number.font=1)
+
+```
+
+As we can see, most of the correlation are higher than 0.3 which is a good point. Q4 and Q23 don't have much correlation with other variables. We should keep an eye out for these variables.
+It is also interesting to note that all the correlations are positive.
+
+Before performing factor analysis, we have to check the suitability of the data and the adequacy of the correlation matrix. This can be done with the Batlett test, KMO test and the Anti-image correlation.
+
+### Bartlett’s Test of sphericity
+
+This test assesses whether there are significant correlations among the variables in the dataset. The null hypothesis of the test is that all variables are uncorrelated. Therefore, a small p-value from the test indicates evidence to reject the null hypothesis, suggesting that the variables are indeed correlated. 
+
+```{r}
+bart_spher(QI)
+```
+We have a small p-value so we can reject the null hypothesis which means some variables are correlated.  
+
+#### KMO
+
+KMO provides information about the proportion of variance in the variables that might be caused by underlying factors.
+
+It is the ratio of the sum of squared correlations to the sum of squared correlations plus the sum of squared partial correlations:
+$$ KMO = \frac{\text{Sum of Squared Correlations}}{\text{Sum of Squared Correlations} + \text{Sum of Squared Partial Correlations}} $$
+This means that a high KMO is associated with a small sum of squared partial correlations. This suggests that a greater proportion of the variance among the variables is shared, rather than being unique to individual variables.
+
+Higher values indicate more suitable data for factor analysis. The criterion is that the KMO should be above 0.6.
+```{r}
+KMOTEST=KMOS(QI)
+KMOTEST$KMO
+```
+We have a value higher than 0.6 which means it's good for factor analysis.
+
+
+#### Anti-Image
+
+If a value in the diagonal is below 0.5, the corresponding variable might be removed from factor analysis. The value on the diagonal represent the Measure of Sampling Adequacy (MSA) for each variable. It indicates how well each variable correlate with all the other variables and thus indicate if they share common factors, the closer to 1 the better (however a extremely high value might indicate that there is to much redundancy in some questions).
+
+```{r}
+#Here the values are the diagonal elements for each vairable
+sort(KMOTEST$MSA)
+```
+All variables are higher than 0.5. No need to remove some variables. We can still notify that q4 has a small value compare to the others so we should keep it in mind. 
+
+### Factor Analysis
+
+Before performing the factor analysis, we should carefully choose the number of factors. To do so, we use the kaiser criterion and the scree-test.
+
+#### Scree-test and kaiser criterion
+```{r}
+FA0 <- psych::fa(QI, rotate="varimax",scores=TRUE)
+
+plot(FA0$e.values,xlab="Factor Number",ylab="Eigenvalue",main="Scree plot",cex.lab=1.2,cex.axis=1.2,cex.main=1.8)+abline(h=1)
+```
+
+```{r}
+EigenValue=FA0$e.values
+
+Variance=EigenValue/ncol(QI)*100
+
+SumVariance=cumsum(EigenValue/ncol(QI))
+
+Total_Variance_Explained=cbind(EigenValue=EigenValue[EigenValue>0],Variance=Variance[Variance>0],Total_Variance=SumVariance[Variance>0])
+
+Total_Variance_Explained
+```
+
+The scree-plot is a graphical representation of eigen values by ordering them according to their size. To choose the number of factors, the rule of thumb is to choose the number  before the elbow of the curve. Unfortunately, this criterion is not very clear and different people may have different choice of the elbow. Thus, it is important to include the kaiser criterion. This criterion says that only factors with eigen value higher than 1 should be extracted. 
+Using these two criteria and knowing the lack of precision, we decide to test different situations around the kaiser criterion. We try the factor analysis with 7 and 8 factors. (little elbow after 8)
+
+The first component has an eigenvalue of 15.9 indicating that it can explain around 48% of the overall variance. The 7 derived factors explain a total variance of 77% and the 8 derived factors 80%.
+
+Now that we have decided the number of factors, we are ready to perform the factor analysis. 
+
+#### Principal axis factoring with 7 factors and Varimax rotation
+```{r}
+FA7 = fa(QI, nfactors=7, rotate="varimax")
+
+print(FA7$loadings, cutoff=0.3,sort=TRUE)
+```
+
+#### Principal axis factoring with 8 factors using Varimax rotation
+```{r}
+FA8 = fa(QI, nfactors=8, rotate="varimax")
+
+print(FA8$loadings, cutoff=0.3,sort=TRUE)
+```
+
+
+As we can see,q4 and q23 loadings don't appear (smaller than 0.3). It makes sense as we saw in our previous step that qd4 and qd23 have really low correlation. Thus, we decide to delete them from our dataset. 
+
+```{r}
+QI$qd4 = NULL
+QI$qd23 = NULL
+head(QI, n=1)
+```
+
+We have to reperform the factor analysis without q4 and q23. 
+
+#### Principal axis factoring with 7 factors using Varimax rotation
+```{r}
+FA7 = fa(QI, nfactors=7, rotate="varimax")
+
+print(FA7$loadings, cutoff=0.3,sort=TRUE)
+```
+
+We can see that qd26, qd28 and qd31 are loading low and on multiple factors. This means they don't have a strong association with either of those factors. It should be interesting to see if something can change by adding a new factor.
+
+#### Principal axis factoring with 8 factors using Varimax rotation
+```{r}
+FA8 = fa(QI, nfactors=8, rotate="varimax")
+
+print(FA8$loadings, cutoff=0.3,sort=TRUE)
+```
+
+With 8 factors it's better.For the Total Variance Explained,the 8-factor model explains more total variance (78.7%) than the 7-factor (76.4%) model .Regarding Interpretability, there are less low loadings and qd26, qd28, qd31 load only on 1 factor now. 
+
+Thus, using 8 factors is preferred.
+```{r, fig.width=10, fig.height=15}
+fa.diagram(FA8, main="Principal axis factoring with 8 factors")
+```
+
+#### Interpretation
+
+Now that we have identified the factors, it's crucial to understand what these factors represent. Therefore, we need to examine the items that constitute them and interpret the factors accordingly. We will help ourselves from the literature review on quality dimensions. 
+
+MR1 (qd2,5,7,8,12,16): Performance <br/>
+MR2 (qd9,14,19,21,24): Serviceability (Customer service) <br/>
+MR3 (qd22,29,33): Reliability/Flawlessness (defects) <br/>
+MR4 (qd3,11,13,30): Ease of Use (user experience) <br/>
+MR5 (qd1,10,20,27): Aesthetics/Appearance (attractiveness/look) <br/>
+MR6 (qd15,17,32):  Conformance (materials) <br/>
+MR7 (qd6,8,18,25): Features/Versatility (extra features) <br/>
+MR8 (qd26,28,31): Durability <br/>
+
+
+### PCA
+
+We will perform a principal component analysis because it is always interesting to employ different extraction methods and assess how similar or different the factor structures are. Then, we can choose which method seems more interpretative.
+
+```{r}
+PCA = psych::principal(QI, 
+                        rotate="varimax",
+                        nfactors=8, 
+                        scores=TRUE)
+
+PCA_communalities=data.frame(sort(PCA$communality))
+PCA_communalities
+```
+We have high communalities which is good. (even better than with PAF)
+
+```{r}
+EigenValue=PCA$values
+
+Variance=EigenValue/ncol(QI)*100
+
+SumVariance=cumsum(EigenValue/ncol(QI))
+
+Total_Variance_Explained=cbind(EigenValue=EigenValue[EigenValue>0],Variance=Variance[Variance>0],Total_Variance=SumVariance[Variance>0])
+
+Total_Variance_Explained
+```
+
+With 8 factors, we can explain 84% of the overall variance. Even with 7 factors you are above 80%. With principal axis factoring, it was only 78%. Thus, PCA seems to work well. 
+Remember, with PCA, all variance in observed variables can be completely accounted for by the extracted factors.
+
+```{r}
+print(PCA$loadings, cutoff=0.3,sort=TRUE)
+```
+
+
+
+
+```{r, fig.width=10, fig.height=15}
+fa.diagram(PCA$loadings, main="Principal component analysis with 8 factors")
+```
+
+#### Comparing PCA and Principal axis factoring with 8 factors
+
+**PCA:**
+
+|                | RC2   | RC1   | RC5   | RC4   | RC7   | RC6   | RC3   | RC8   |
+|----------------|-------|-------|-------|-------|-------|-------|-------|-------|
+| SS loadings    | 4.673 | 3.908 | 3.492 | 3.297 | 3.020 | 2.856 | 2.492 | 2.337 |
+| Proportion Var | 0.151 | 0.126 | 0.113 | 0.106 | 0.097 | 0.092 | 0.080 | 0.075 |
+| Cumulative Var | 0.151 | 0.277 | 0.389 | 0.496 | 0.593 | 0.685 | 0.766 | 0.841 |
+
+
+**Principal axis factoring**
+
+|                | MR2   | MR1   | MR5   | MR4   | MR3   | MR7   | MR6   | MR8   |
+|----------------|-------|-------|-------|-------|-------|-------|-------|-------|
+| SS loadings    | 4.569 | 3.577 | 3.404 | 3.121 | 2.781 | 2.675 | 2.324 | 1.935 |
+| Proportion Var | 0.147 | 0.115 | 0.110 | 0.101 | 0.090 | 0.086 | 0.075 | 0.062 |
+| Cumulative Var | 0.147 | 0.263 | 0.373 | 0.473 | 0.563 | 0.649 | 0.724 | 0.787 |
+
+
+Principal axis factoring and PCA groups the items identically.
+The loadings seem a bit better with PCA. Almost all loadings are higher than 0.7. Also the Sum of Squares Loadings, which indicate the amount of variance in the original variables explained by the factor, are better. Higher SS loadings for a factor indicate that the factor explains more variance in the data, so it's better. 
+
+We can also see that with PCA the fifth, sixth and seventh factors (regarding the SS loadings) are different than those that we obtain with the Principal axis factoring.
+
+Regarding eigenvalues:
+
+Eigenvalues themselves do not directly indicate relevance for purchase decisions or any behavior. They simply represent the amount of variance explained by each factor in a statistical analysis. Therefore, while a higher eigenvalue might suggest a stronger influence of a particular factor, it doesn't necessarily mean that the corresponding dimension is more relevant for explaining behavior, such as repurchase behavior.
+
+
+## Question 2
+
+For now, we only used methods with "varimax". This means we used orthogonal rotation method,  meaning it forces the factors to be uncorrelated with each other.This is useful when the researcher assumes that factors are independent of each other. However, in our case, the factors may be dependent because they represent the same concept, Quality. Therefore, we will try to use "promax" which is an oblique rotation method, allowing factors to be correlated with each other. We will use the same number of factors as before (8).
+
+```{r}
+PA8_ob =  principal(
+                QI,
+                rotate="promax",
+                nfactors=8,
+                scores=TRUE)
+PA8_ob
+```
+Here, 84% of the total variance is explained (Cumulative var). It is the same as PCA with varimax rotation. 
+
+Let's take a look at the factors and their items:
+```{r}
+print(PA8_ob$loadings,cutoff=0.3,sort=TRUE)
+```
+
+We no longer encounter the issue with qd8. It now loads exclusively on one factor. Furthermore, almost all loadings are higher than 0.7 and are better than with the "varimax" rotation.
+
+We can take a look at the correlation between the factors to understand the patterns. 
+
+### Correlation between factors
+```{r}
+corrplot(PA8_ob$r.scores,type = "lower", method="number")
+```
+
+A positive correlation indicates a relationship between the factors. Thankfully, our correlations are not overly high, but they still represent favorable values. Considering that strong correlations between components may indicate that they are measuring related dimensions, our results are interesting because we want to capture different aspects of the same idea (Quality).
+
+The highest correlation between factors is between factor 7 (Features/Versatility) and factor 1 (Performance) and the correlation is of 68%. This suggests that as Factor 1 increases, Factor 7 tends to increase as well, and vice versa. This also suggests that Factor 7 and Factor 1 are measuring quite similar dimensions. This is not so surprising as performance may depend of the features. 
+
+
+If we want more information for each customer, we can look at the factor scores. Factor value reflects the characteristic of a certain object (case) on a certain factor.They are derived based on the factor loadings obtained during the factor analysis process.
+If the score is positive, in comparison with all other objects, the object score is above average on a factor. The opposite for a negative score. 
+
+### Factor scores
+```{r}
+#PA8_ob$scores
+Fscores = as.data.frame(PA8_ob$scores)
+dim(Fscores)
+colnames(Fscores) = c("Serviceability","Performance","Aesthetics","Ease_of_Use","Features","Reliability","Conformance","Durability")
+head(Fscores, n=7)
+```
+
+The items are represented by the same factors as before. However, the factors importance have change. (see Proportion Explained)
+
+RC1 (qd2,5,7,12,16): Performance <br/>
+RC2 (qd9,14,19,21,24): Serviceability (Customer service) <br/>
+RC3 (qd15,17,32): Conformance (materials) <br/>
+RC4 (qd3,11,13,30): Ease of Use (user experience) <br/>
+RC5 (qd1,10,20,27): Aesthetics/Appearance (attractiveness/look) <br/>
+RC6 (qd22,29,33): Reliability/Flawlessness (defects) <br/>
+RC7 (qd6,8,18,25): Features/Versatility (extra features) <br/>
+RC8 (qd26,28,31): Durability <br/>
+
+
+###  Mean scores for willingness to pay and repurchase intention
+
+We want to know the overall willingness to pay and intention to repurchase for each customer. Thus, we take the average of the questions regarding willingness to pay and the average of the questions regarding repurchase intention.
+
+```{r}
+QI2 = cbind(survey[,paste0("qd", seq(1, 33))], survey[, paste0("wtp", seq(1, 3))], survey[,paste0("ri", seq(1, 2))], survey[,"brandrec"])
+colnames(QI2)[ncol(QI2)] = "brandrec"
+QI2 = na.omit(QI2)
+
+WTP = QI2[,paste0("wtp", seq(1, 3))]
+RI = QI2[,paste0("ri", seq(1, 2))]
+WTP_mean = as.data.frame(rowMeans(WTP))
+colnames(WTP_mean)[ncol(WTP_mean)] = "WTP"
+RI_mean = as.data.frame(rowMeans(RI))
+colnames(RI_mean)[ncol(RI_mean)] = "RI"
+
+Mean_scores = cbind(WTP_mean, RI_mean)
+head(Mean_scores)
+```
+
+### Regression analysis
+We can run a regression with the factor scores of the quality dimensions as independent and both the mean score of willingness to pay premium and repurchase intention as dependent variables to understand what drives WTP and RI. 
+
+
+### WTP
+```{r}
+regr_WTP = lm(rowMeans(WTP) ~ Fscores$Serviceability + Fscores$Performance + Fscores$Aesthetics + Fscores$Ease_of_Use +  Fscores$Features + Fscores$Reliability + Fscores$Conformance + Fscores$Durability, data = Fscores)
+summary(lm.beta(regr_WTP))
+```
+
+For the willingness to pay, the statistically significant factors are serviceability, performance, ease of use, features and conformance.  Depending on the level of statistical significance, we can add aesthetics.
+The most important factor for the willingness to pay is the ease of use followed by features, performance, conformance and serviceability. 
+From a managerial perspective, we should put more emphasis on the ease of use and the features if we want to encourage the willingness to pay of the customer. 
+
+
+### RI
+```{r}
+regr_RI = lm(rowMeans(RI) ~ Fscores$Serviceability + Fscores$Performance + Fscores$Aesthetics + Fscores$Ease_of_Use +  Fscores$Features + Fscores$Reliability + Fscores$Conformance + Fscores$Durability, data = Fscores)
+summary(lm.beta(regr_RI))
+```
+For the repurchase intention, the statistically significant factors are serviceability, performance, ease of use and durability. Depending on the level of statistical significance, we can add aesthetics, features and conformance. The most important factor is performance followed by ease of use,serviceability and durability.  From a managerial perspective, we should put more emphasis on the performance and the ease of use if we want to encourage the willingness to pay of the customer. 
+
+So WTP and RI are not completely driven by the same factors. However, they share common influences such as the ease of use, the performance and the serviceability. Therefore, from a managerial standpoint, allocating emphasis to these factors is crucial as they impact both WTP and RI.
+
+
+We have a broad idea of the qualities that drive WTP and RI. It could be interesting to see if the variables that drive RI differ across brands.  
+
+
+### Across brands (1-Apple  2-Samsung  3- LG  4- Motorola  5- Other)
+
+Lets compare the repurchase intention across brands. 
+
+```{r}
+Data = cbind(Fscores, QI2["brandrec"])
+```
+
+### Apple
+
+First, we will take a look at Apple. 
+```{r}
+Apple = subset(Data, brandrec == 1 )
+
+RI = rowMeans(QI2[QI2$brandrec == 1, paste0("ri", seq(1, 2))])
+
+regr_Apple = lm(RI ~ Serviceability + Performance + Aesthetics + Ease_of_Use + Features + Reliability + Conformance + Durability, data = Apple)
+
+summary(lm.beta(regr_Apple))
+```
+
+The variables that are statistically significant are serviceability, performance, aesthetics and ease of use. Depending on the chosen significant level, there is also conformance. This means that these variables are driving the repurchase intention of their clients. Looking at the coefficients, we can say that ease of use is the most important quality followed by performance, serviceability and aesthetics. 
+ 
+
+### Samsung
+
+```{r}
+Samsung = subset(Data, brandrec == 2 )
+
+RI = rowMeans(QI2[QI2$brandrec == 2, paste0("ri", seq(1, 2))])
+
+regr_Samsung = lm(RI ~ Serviceability + Performance + Aesthetics + Ease_of_Use + Features + Reliability + Conformance + Durability, data = Samsung)
+
+summary(lm.beta(regr_Samsung))
+```
+
+For Samsung, the variables that are statistically significant are performance, ease of use and durability. These qualities are important for their customer and the most important is durability followed by performance and ease of use. 
+
+### LG
+```{r}
+LG = subset(Data, brandrec == 3 )
+
+RI = rowMeans(QI2[QI2$brandrec == 3, paste0("ri", seq(1, 2))])
+
+regr_LG = lm(RI ~ Serviceability + Performance + Aesthetics + Ease_of_Use + Features + Reliability + Conformance + Durability, data = LG)
+
+summary(lm.beta(regr_LG))
+```
+
+For LG,  it appears that reliability is the primary determinant influencing repeat purchases. Depending on the chosen significant level, there is also Performance. 
+
+In conclusion, each brand has different qualities that drives repurchase intention. We can say that performance seems to be an important one as it's statistically significant in all companies depending on the significant level. 
+
+#### Comparing factor scores between brands
+
+To compare the brands on the factor scores. We decided to merge the datsaet with the 33 questions and the brandrec with the factor scores. 
+```{r}
+QI3 = cbind(QI2, Fscores)
+```
+First, i do the mean of the factors scores for each factor across all Apple customers.
+
+### Apple
+```{r}
+Apple2 = QI3[QI3$brandrec==1,]
+
+serviceability_apple_mean = mean(Apple2$Serviceability)
+performance_apple_mean = mean(Apple2$Performance)
+aesthetics_apple_mean = mean(Apple2$Aesthetics)
+ease_apple_mean = mean(Apple2$Ease_of_Use)
+features_apple_mean = mean(Apple2$Features)
+reliability_apple_mean = mean(Apple2$Reliability)
+conformance_apple_mean = mean(Apple2$Conformance)
+durability_apple_mean = mean(Apple2$Durability)
+
+apple_means = data.frame(
+  Apple = c("Serviceability", "Performance", "Aesthetics", 
+            "Ease of Use", "Features", "Reliability", 
+            "Conformance", "Durability"),
+  Mean = c(serviceability_apple_mean, performance_apple_mean, 
+           aesthetics_apple_mean, ease_apple_mean, 
+           features_apple_mean, reliability_apple_mean, 
+           conformance_apple_mean, durability_apple_mean)
+)
+
+print(apple_means)
+```
+
+### Samsung
+```{r}
+Samsung2 = QI3[QI3$brandrec==2,]
+
+serviceability_samsung_mean = mean(Samsung2$Serviceability)
+performance_samsung_mean = mean(Samsung2$Performance)
+aesthetics_samsung_mean = mean(Samsung2$Aesthetics)
+ease_samsung_mean = mean(Samsung2$Ease_of_Use)
+features_samsung_mean = mean(Samsung2$Features)
+reliability_samsung_mean = mean(Samsung2$Reliability)
+conformance_samsung_mean = mean(Samsung2$Conformance)
+durability_samsung_mean = mean(Samsung2$Durability)
+
+samsung_means = data.frame(
+  Samsung = c("Serviceability", "Performance", "Aesthetics", 
+              "Ease of Use", "Features", "Reliability", 
+              "Conformance", "Durability"),
+  Mean = c(serviceability_samsung_mean, performance_samsung_mean, 
+           aesthetics_samsung_mean, ease_samsung_mean, 
+           features_samsung_mean, reliability_samsung_mean, 
+           conformance_samsung_mean, durability_samsung_mean)
+)
+
+print(samsung_means)
+```
+
+
+Now, we can do a t-test to compare the mean for each factors between Apple and Samsung.
+
+### T-test
+$$
+H_0: \mu_{serviceability, Apple} = \mu_{serviceability, Samsung} \quad \text{(The means of the two groups are equal)} \\
+H_1: \mu_{serviceability, Apple} \neq \mu_{serviceability, Samsung} \quad \text{(The means of the two groups are not equal)}
+$$
+
+```{r}
+# SERVICEABILITY
+t_test_serviceability= t.test(Samsung2$Serviceability, Apple2$Serviceability)
+print(t_test_serviceability)
+#there is a statistically significant difference between the means of the two groups.
+```
+
+
+$$
+H_0: \mu_{performance, Apple} = \mu_{performance, Samsung} \quad  \\
+H_1: \mu_{performance, Apple} \neq \mu_{performance, Samsung} \quad 
+$$
+```{r}
+# PERFORMANCE
+t_test_Performance= t.test(Samsung2$Performance, Apple2$Performance)
+print(t_test_Performance)
+#there is a statistically significant difference between the means of the two groups.
+
+```
+
+
+```{r}
+# AESTHETICS
+t_test_Aesthetics= t.test(Samsung2$Aesthetics, Apple2$Aesthetics)
+print(t_test_Aesthetics)
+#there is a statistically significant difference between the means of the two groups.
+```
+
+```{r}
+# EASE OF USE
+t_test_Ease_of_Use= t.test(Samsung2$Ease_of_Use, Apple2$Ease_of_Use)
+print(t_test_Ease_of_Use)
+#there is a statistically significant difference between the means of the two groups.
+```
+
+```{r}
+# FEATURES
+t_test_Features= t.test(Samsung2$Features, Apple2$Features)
+print(t_test_Features)
+#there is a statistically significant difference between the means of the two groups.
+```
+
+```{r}
+# RELIABILITY
+t_test_Reliability= t.test(Samsung2$Reliability, Apple2$Reliability)
+print(t_test_Reliability)
+#there is  NOT a statistically significant difference between the means of the two groups.
+```
+
+
+```{r}
+# CONFORMANCE
+t_test_Conformance= t.test(Samsung2$Conformance, Apple2$Conformance)
+print(t_test_Conformance)
+#there is a statistically significant difference between the means of the two groups.
+```
+
+
+```{r}
+# DURABILITY
+t_test_Durability= t.test(Samsung2$Durability, Apple2$Durability)
+print(t_test_Durability)
+#there is a statistically significant difference between the means of the two groups.
+```
+
+With the p-value exceeding 0.05 only for Reliability, we possess enough evidence to dismiss the null hypothesis (H0) for all factors except Reliability. This suggests that there are differences in the average scores for each factor between the two brands. 
+Both Apple and Samsung users perceive reliability similarly. However, they differ in their perceptions of serviceability, performance, aesthetics, ease of use, features, conformance, and durability.
+
+Examining the average values for both sets is informative:
+```{r}
+combined_table = cbind(apple_means, samsung_means[,2])
+colnames(combined_table) = c("Attribute", "Apple means", "Samsung means")
+print(combined_table)
+```
+(Here we don't take into account the row "Reliability" as the difference is not significant)
+
+According to the mean factor scores, Apple consumers generally have higher opinions about their devices than Samsung customers do about serviceability, performance, aesthetics, simplicity of use, features, conformity, and durability. For example, With the mean factor score for serviceability being 0.16058047 for Apple customers and -0.11183008 for Samsung customers, we can observe that, on average, Apple customers perceive serviceability more positively than Samsung customers do.
+
+## Conclusion
+
+We found that the use of both Principal Axis Factoring and Principal Component Analysis with oblique rotation ("promax") enriches the analysis by considering the possibility of correlated factors, which is realistic given the multifaceted nature of product quality. Additional, regression analyses reveal that different quality dimensions have varying degrees of influence on willingness to pay premium and their intentions to repurchase. Factors such as Ease of Use and Features emerge as critical drivers for WTPP, while Performance and Ease of Use for RI. Finally, brand-specific dynamics were found, for example, Apple and Samsung customers show distinct priorities and perceptions regarding quality dimensions, offering valuable guidance for future targeted marketing and product development strategies.
+
+
+
+
+
+
